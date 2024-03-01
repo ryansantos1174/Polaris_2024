@@ -7,6 +7,7 @@
 
 
 import numpy as np
+import matplotlib.pyplot as plt
 import uproot
 import infofile
 
@@ -49,10 +50,24 @@ samples = {
 
 }
 database ="https://atlas-opendata.web.cern.ch/atlas-opendata/samples/2020/4lep/"
-data = get_data_from_files(samples, database, "lep_phi")
+data = get_data_from_files(samples, database, "lep_phi") # Change string here
 
-for key, values in data.items():
 
-    # Use this to combine data
-    values = np.concatenate(values)
+# To properly format the data you need to use np.concatenate
+# Using this we can plot a single entry in the dictionary above
+_ = plt.hist(np.concatenate(data['data']), bins=100)
+plt.title("Histogram")
+plt.show()
 
+# We can also loop through items in the dictionary like so
+# (make sure to comment above code to avoid duplicates):
+############################################################
+# for value in data.values():                              #
+#     plt.clf()                                            #
+#     _ = plt.hist(np.concatenate(data['data']), bins=100) #
+#     plt.title("Histogram")                               #
+#     plt.show()                                           #
+############################################################
+
+# You can also savefigures with plt.savefig("<filename>")
+# just place that anywhere after you call plt.hist
