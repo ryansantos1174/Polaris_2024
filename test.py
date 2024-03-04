@@ -71,3 +71,4 @@ plt.show()
 
 # You can also savefigures with plt.savefig("<filename>")
 # just place that anywhere after you call plt.hist
+
