@@ -1,4 +1,5 @@
 import uproot3 # for reading .root files
+import pickle
 import pandas as pd # to store data as dataframe
 import time # to measure time to analyse
 import math # for mathematical functions such as square root
@@ -8,6 +9,7 @@ from matplotlib.ticker import AutoMinorLocator # for minor ticks
 
 import infofile # local file containing info on cross-sections, sums of weights, dataset IDs
 
+rerun = False
 lumi = 10 # fb-1 # data_A+B+C+D
 
 fraction = 0.03 # reduce this is you want the code to run quicker
@@ -80,6 +82,7 @@ def read_file(path,sample):
     tree = uproot3.open(path)["mini"] # open the tree called mini
     numevents = uproot3.numentries(path, "mini") # number of events
     if 'data' not in sample: xsec_weight = get_xsec_weight(sample) # get cross-section weight
+    i = 0
     for data in tree.iterate(['lep_charge','lep_type','lep_pt',
                               # uncomment these variables if you want to calculate masses 
                               #,'lep_eta','lep_phi','lep_E', 
@@ -90,7 +93,9 @@ def read_file(path,sample):
                              ], # variables to calculate Monte Carlo weight
                              outputtype=pd.DataFrame, # choose output type as pandas DataFrame
                              entrystop=numevents*fraction): # process up to numevents*fraction
-
+        if (i % 100) == 0:
+            print(f"On event {i}")
+        i += 1
         nIn = len(data.index) # number of events in this batch
 
         if 'data' not in sample: # only do this for Monte Carlo simulation files
@@ -131,7 +136,16 @@ def read_file(path,sample):
     return data_all # return dataframe containing events passing all cuts
 
 start = time.time() # time at start of whole processing
-data = get_data_from_files() # process all files
+
+if rerun: 
+    database ="https://atlas-opendata.web.cern.ch/atlas-opendata/samples/2020/4lep/"
+    data = get_data_from_files() # process all files
+    with open("datafile.pkl", "wb") as file:
+        pickle.dump(data, file)
+else:
+    with open("datafile.pkl", "rb") as file:
+        data = pickle.load(file)
+
 elapsed = time.time() - start # time after whole processing
 print("Time taken: "+str(round(elapsed,1))+"s") # print total time taken to process every file
 
@@ -169,7 +183,10 @@ def plot_SoverB(data):
     
         bin_edges = [ h_xrange_min + x*h_bin_width for x in range(h_num_bins+1) ] # bin limits
         bin_centres = [ h_xrange_min+h_bin_width/2 + x*h_bin_width for x in range(h_num_bins) ] # bin centres
-        
+
+        print(data)
+        print(signal)
+        print(x_variable)
         signal_x = data[signal][x_variable] # histogram the signal
     
         mc_x = [] # define list to hold the Monte Carlo histogram entries
