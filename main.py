@@ -1,8 +1,9 @@
 import pickle
 import time  # to measure time to analyse
 import math  # for mathematical functions such as square root
+import awkward as ak
 
-import uproot3  # for reading .root files
+import uproot3 # for reading .root files
 import pandas as pd  # to store data as dataframe
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import AdaBoostClassifier
@@ -17,11 +18,19 @@ import infofile  # local file containing info on cross-sections, sums of weights
 lumi = 10  # fb-1 # data_A+B+C+D
 
 fraction = 0.03  # reduce this is you want the code to run quicker
-
+MeV = 0.001
+GeV = 1.0
 rerun = False
 
 tuple_path = "https://atlas-opendata.web.cern.ch/atlas-opendata/samples/2020/4lep/"
 
+def calc_mllll(lep_pt, lep_eta, lep_phi, lep_E):
+    # construct awkward 4-vector array
+    p4 = vector.zip({"pt": lep_pt, "eta": lep_eta, "phi": lep_phi, "E": lep_E})
+    # calculate invariant mass of first 4 leptons
+    # [:, i] selects the i-th lepton in each event
+    # .M calculates the invariant mass
+    return (p4[:, 0] + p4[:, 1] + p4[:, 2] + p4[:, 3]).M * MeV
 
 samples = {
 
@@ -69,6 +78,16 @@ def calc_weight(xsec_weight, mcWeight, scaleFactor_PILEUP,
                 scaleFactor_ELE, scaleFactor_MUON,
                 scaleFactor_LepTRIGGER):
     return xsec_weight*mcWeight*scaleFactor_PILEUP*scaleFactor_ELE*scaleFactor_MUON*scaleFactor_LepTRIGGER
+
+def calc_weight2(xsec_weight, events):
+    return (
+        xsec_weight
+        * events.mcWeight
+        * events.scaleFactor_PILEUP
+        * events.scaleFactor_ELE
+        * events.scaleFactor_MUON 
+        * events.scaleFactor_LepTRIGGER
+    )
 
 
 def calc_lep_pt_i(lep_pt, i):
@@ -361,3 +380,213 @@ print(classification_report(y_test, y_predicted,
                             target_names=["background", "signal"]))
 print("Area under ROC curve for test data: %.4f" % (roc_auc_score(y_test,
                                                                   bdt.decision_function(X_test))))
+
+def plot_data(data):
+
+    xmin = 80 * GeV
+    xmax = 250 * GeV
+    step_size = 5 * GeV
+
+    bin_edges = np.arange(start=xmin, # The interval includes this value
+                     stop=xmax+step_size, # The interval doesn't include this value
+                     step=step_size ) # Spacing between values
+    bin_centres = np.arange(start=xmin+step_size/2, # The interval includes this value
+                            stop=xmax+step_size/2, # The interval doesn't include this value
+                            step=step_size ) # Spacing between values
+
+    data_x,_ = np.histogram(ak.to_numpy(data['data']['mllll']), 
+                            bins=bin_edges ) # histogram the data
+    data_x_errors = np.sqrt( data_x ) # statistical error on the data
+
+    signal_x = ak.to_numpy(data[r'Signal ($m_H$ = 125 GeV)']['mllll']) # histogram the signal
+    signal_weights = ak.to_numpy(data[r'Signal ($m_H$ = 125 GeV)'].totalWeight) # get the weights of the signal events
+    signal_color = samples[r'Signal ($m_H$ = 125 GeV)']['color'] # get the colour for the signal bar
+
+    mc_x = [] # define list to hold the Monte Carlo histogram entries
+    mc_weights = [] # define list to hold the Monte Carlo weights
+    mc_colors = [] # define list to hold the colors of the Monte Carlo bars
+    mc_labels = [] # define list to hold the legend labels of the Monte Carlo bars
+
+    for s in samples: # loop over samples
+        if s not in ['data', r'Signal ($m_H$ = 125 GeV)']: # if not data nor signal
+            mc_x.append( ak.to_numpy(data[s]['mllll']) ) # append to the list of Monte Carlo histogram entries
+            mc_weights.append( ak.to_numpy(data[s].totalWeight) ) # append to the list of Monte Carlo weights
+            mc_colors.append( samples[s]['color'] ) # append to the list of Monte Carlo bar colors
+            mc_labels.append( s ) # append to the list of Monte Carlo legend labels
+    
+
+
+    # *************
+    # Main plot 
+    # *************
+    main_axes = plt.gca() # get current axes
+    
+    # plot the data points
+    main_axes.errorbar(x=bin_centres, y=data_x, yerr=data_x_errors,
+                       fmt='ko', # 'k' means black and 'o' is for circles 
+                       label='Data') 
+    
+    # plot the Monte Carlo bars
+    mc_heights = main_axes.hist(mc_x, bins=bin_edges, 
+                                weights=mc_weights, stacked=True, 
+                                color=mc_colors, label=mc_labels )
+    
+    mc_x_tot = mc_heights[0][-1] # stacked background MC y-axis value
+    
+    # calculate MC statistical uncertainty: sqrt(sum w^2)
+    mc_x_err = np.sqrt(np.histogram(np.hstack(mc_x), bins=bin_edges, weights=np.hstack(mc_weights)**2)[0])
+    
+    # plot the signal bar
+    main_axes.hist(signal_x, bins=bin_edges, bottom=mc_x_tot, 
+                   weights=signal_weights, color=signal_color,
+                   label=r'Signal ($m_H$ = 125 GeV)')
+    
+    # plot the statistical uncertainty
+    main_axes.bar(bin_centres, # x
+                  2*mc_x_err, # heights
+                  alpha=0.5, # half transparency
+                  bottom=mc_x_tot-mc_x_err, color='none', 
+                  hatch="////", width=step_size, label='Stat. Unc.' )
+
+    # set the x-limit of the main axes
+    main_axes.set_xlim( left=xmin, right=xmax ) 
+    
+    # separation of x axis minor ticks
+    main_axes.xaxis.set_minor_locator( AutoMinorLocator() ) 
+    
+    # set the axis tick parameters for the main axes
+    main_axes.tick_params(which='both', # ticks on both x and y axes
+                          direction='in', # Put ticks inside and outside the axes
+                          top=True, # draw ticks on the top axis
+                          right=True ) # draw ticks on right axis
+    
+    # x-axis label
+    main_axes.set_xlabel(r'4-lepton invariant mass $\mathrm{m_{4l}}$ [GeV]',
+                        fontsize=13, x=1, horizontalalignment='right' )
+    
+    # write y-axis label for main axes
+    main_axes.set_ylabel('Events / '+str(step_size)+' GeV',
+                         y=1, horizontalalignment='right') 
+    
+    # set y-axis limits for main axes
+    main_axes.set_ylim( bottom=0, top=np.amax(data_x)*1.6 )
+    
+    # add minor ticks on y-axis for main axes
+    main_axes.yaxis.set_minor_locator( AutoMinorLocator() ) 
+
+    # Add text 'ATLAS Open Data' on plot
+    plt.text(0.05, # x
+             0.93, # y
+             'ATLAS Open Data', # text
+             transform=main_axes.transAxes, # coordinate system used is that of main_axes
+             fontsize=13 ) 
+    
+    # Add text 'for education' on plot
+    plt.text(0.05, # x
+             0.88, # y
+             'for education', # text
+             transform=main_axes.transAxes, # coordinate system used is that of main_axes
+             style='italic',
+             fontsize=8 ) 
+    
+    # Add energy and luminosity
+    lumi_used = str(lumi*fraction) # luminosity to write on the plot
+    plt.text(0.05, # x
+             0.82, # y
+             '$\sqrt{s}$=13 TeV,$\int$L dt = '+lumi_used+' fb$^{-1}$', # text
+             transform=main_axes.transAxes ) # coordinate system used is that of main_axes
+    
+    # Add a label for the analysis carried out
+    plt.text(0.05, # x
+             0.76, # y
+             r'$H \rightarrow ZZ^* \rightarrow 4\ell$', # text 
+             transform=main_axes.transAxes ) # coordinate system used is that of main_axes
+
+    # draw the legend
+    main_axes.legend( frameon=False ) # no box around the legend
+    
+    return
+def bdt_cut(data, cut_value):
+    data_for_BDT = {} # define empty dictionary to hold dataframes that will be used to train the BDT
+    BDT_inputs = ['lep_pt_1','lep_pt_2'] # list of features for BDT
+    for key in data: # loop over the different keys in the dictionary of dataframes
+        data_for_BDT[key] = data[key][BDT_inputs].copy()
+    all_MC = [] # define empty list that will contain all features for the MC
+    for key in data: # loop over the different keys in the dictionary of dataframes
+        if key!='data': # only MC should pass this
+            all_MC.append(data_for_BDT[key]) # append the MC dataframe to the list containing all MC features
+    X = np.concatenate(all_MC) # concatenate the list of MC dataframes into a single 2D array of features, called X
+    y_predicted = bdt.decision_function(X)
+
+    return y_predicted < cut_value
+
+def read_file2(path,sample):
+    start = time.time() # start the clock
+    print("\tProcessing: "+sample) # print which sample is being processed
+    data_all = [] # define empty list to hold all data for this sample
+    
+    # open the tree called mini using a context manager (will automatically close files/resources)
+    with uproot.open(path + ":mini") as tree:
+        numevents = tree.num_entries # number of events
+        if 'data' not in sample: xsec_weight = get_xsec_weight(sample) # get cross-section weight
+        for data in tree.iterate(['lep_pt','lep_eta','lep_phi',
+                                  'lep_E','lep_charge','lep_type', 
+                                  # add more variables here if you make cuts on them 
+                                  'mcWeight','scaleFactor_PILEUP',
+                                  'scaleFactor_ELE','scaleFactor_MUON',
+                                  'scaleFactor_LepTRIGGER'], # variables to calculate Monte Carlo weight
+                                 library="ak", # choose output type as awkward array
+                                 entry_stop=numevents*fraction): # process up to numevents*fraction
+
+            nIn = len(data) # number of events in this batch
+
+            if 'data' not in sample: # only do this for Monte Carlo simulation files
+                # multiply all Monte Carlo weights and scale factors together to give total weight
+                data['totalWeight'] = calc_weight2(xsec_weight, data)
+
+            # cut on lepton charge using the function cut_lep_charge defined above
+            data = data[~bdt_cut(data, 0.0)]
+
+            # calculation of 4-lepton invariant mass using the function calc_mllll defined above
+            data['mllll'] = calc_mllll(data.lep_pt, data.lep_eta, data.lep_phi, data.lep_E)
+
+            # array contents can be printed at any stage like this
+            #print(data)
+
+            # array column can be printed at any stage like this
+            #print(data['lep_pt'])
+
+            # multiple array columns can be printed at any stage like this
+            #print(data[['lep_pt','lep_eta']])
+
+            nOut = len(data) # number of events passing cuts in this batch
+            data_all.append(data) # append array from this batch
+            elapsed = time.time() - start # time taken to process
+            print("\t\t nIn: "+str(nIn)+",\t nOut: \t"+str(nOut)+"\t in "+str(round(elapsed,1))+"s") # events before and after
+    
+    return ak.concatenate(data_all) # return array containing events passing all cuts
+
+def get_data_from_files2():
+
+    data = {} # define empty dictionary to hold awkward arrays
+    for s in samples: # loop over samples
+        print('Processing '+s+' samples') # print which sample
+        frames = [] # define empty list to hold data
+        for val in samples[s]['list']: # loop over each file
+            if s == 'data': prefix = "Data/" # Data prefix
+            else: # MC prefix
+                prefix = "MC/mc_"+str(infofile.infos[val]["DSID"])+"."
+            fileString = tuple_path+prefix+val+".4lep.root" # file name to open
+            temp = read_file2(fileString,val) # call the function read_file defined below
+            frames.append(temp) # append array returned from read_file to list of awkward arrays
+        data[s] = ak.concatenate(frames) # dictionary entry is concatenated awkward arrays
+    
+    return data # return dictionary of awkward arrays
+
+
+start = time.time() # time at start of whole processing
+data = get_data_from_files() # process all files
+elapsed = time.time() - start # time after whole processing
+print("Time taken: "+str(round(elapsed,1))+"s") # print total time taken to process every file
+print(data)
+#plot_data(data)
